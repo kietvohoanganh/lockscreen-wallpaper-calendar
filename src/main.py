@@ -6,12 +6,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# Bảng màu UI chuyên nghiệp (Xanh lam, Vàng cam, Đỏ san hô, Tím nhạt)
+# Professional UI Palette
 EVENT_COLORS = [
-    (74, 144, 226, 255),  
-    (245, 166, 35, 255),  
-    (238, 84, 84, 255),   
-    (189, 16, 224, 255)   
+    (74, 144, 226, 255),   # Blue
+    (245, 166, 35, 255),   # Orange
+    (238, 84, 84, 255),    # Coral Red
+    (189, 16, 224, 255)    # Purple
 ]
 
 def get_calendar_events():
@@ -34,38 +34,34 @@ def get_calendar_events():
 
 def generate_pro_wallpaper(events):
     base_image = Image.open("src/background.png").convert("RGBA")
-    # Làm tối toàn bộ ảnh nền một chút để chữ nổi bật hơn (giống ảnh mẫu)
-    dark_overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 100))
-    base_image = Image.alpha_composite(base_image, dark_overlay)
-    
     draw = ImageDraw.Draw(base_image)
     
-    # Tải Font chữ
+    # Download Web Fonts
     font_reg_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
     font_bold_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf"
     urllib.request.urlretrieve(font_reg_url, "Roboto-Reg.ttf")
     urllib.request.urlretrieve(font_bold_url, "Roboto-Bold.ttf")
     
-    font_day = ImageFont.truetype("Roboto-Bold.ttf", 35)
-    font_date = ImageFont.truetype("Roboto-Bold.ttf", 40)
+    font_day = ImageFont.truetype("Roboto-Reg.ttf", 35)
+    font_date = ImageFont.truetype("Roboto-Bold.ttf", 45)
     font_header = ImageFont.truetype("Roboto-Bold.ttf", 55)
-    font_time = ImageFont.truetype("Roboto-Bold.ttf", 45)
+    font_time = ImageFont.truetype("Roboto-Reg.ttf", 45)
     font_event = ImageFont.truetype("Roboto-Bold.ttf", 45)
     
-    # --- 1. THIẾT KẾ GRID 7 NGÀY (MODULAR BLOCKS) ---
-    grid_y_start = 850  # Bắt đầu ngay dưới cụm đồng hồ iOS
-    margin_x = 80
+    # --- UX FIX 1: SAFE ZONE PLACEMENT ---
+    # Shift UI down to Y=1750 (the dark background area) to preserve the main subject.
+    grid_y_start = 1750  
+    margin_x = 100
     usable_width = base_image.width - (margin_x * 2)
     col_w = usable_width / 7
     
-    utc_now = datetime.utcnow()
-    local_now = utc_now + timedelta(hours=7)
+    local_now = datetime.utcnow() + timedelta(hours=7)
     
-    # Gán màu cố định cho mỗi sự kiện để đồng bộ giữa Grid và Agenda
     event_color_map = {}
     for i, event in enumerate(events):
         event_color_map[event['id']] = EVENT_COLORS[i % len(EVENT_COLORS)]
 
+    # --- UX FIX 2: PRECISION GRID ALIGNMENT ---
     for i in range(7):
         current_day = local_now + timedelta(days=i)
         day_str = current_day.strftime("%a")
@@ -74,57 +70,67 @@ def generate_pro_wallpaper(events):
         col_x = margin_x + (i * col_w)
         col_center_x = col_x + (col_w / 2)
         
-        # Vẽ thứ và ngày
-        text_color = (255, 255, 255, 255) if i == 0 else (180, 180, 180, 255)
+        text_color = (255, 255, 255, 255) if i == 0 else (160, 160, 160, 255)
+        
         day_w = draw.textlength(day_str, font=font_day)
         date_w = draw.textlength(date_str, font=font_date)
         
         draw.text((col_center_x - day_w/2, grid_y_start), day_str, fill=text_color, font=font_day)
-        draw.text((col_center_x - date_w/2, grid_y_start + 45), date_str, fill=text_color, font=font_date)
+        draw.text((col_center_x - date_w/2, grid_y_start + 50), date_str, fill=text_color, font=font_date)
         
-        # Vẽ các block sự kiện cho ngày hôm đó
-        block_y = grid_y_start + 110
+        # Color Blocks
+        block_y = grid_y_start + 120
         events_this_day = [e for e in events if e['start'].get('dateTime', e['start'].get('date'))[8:10] == current_day.strftime("%d")]
         
-        for e in events_this_day[:4]: # Hiển thị tối đa 4 block mỗi cột
+        for e in events_this_day[:4]:
             color = event_color_map[e['id']]
-            draw.rectangle([col_x + 5, block_y, col_x + col_w - 5, block_y + 15], fill=color)
-            block_y += 22
+            block_w = 40
+            draw.rounded_rectangle([col_center_x - block_w/2, block_y, col_center_x + block_w/2, block_y + 12], radius=6, fill=color)
+            block_y += 20
 
-    # --- 2. THIẾT KẾ AGENDA HÔM NAY (TYPOGRAPHY) ---
-    agenda_y_start = grid_y_start + 280
-    draw.text((margin_x, agenda_y_start), "Today", fill=(255, 255, 255, 255), font=font_header)
-    
-    list_y = agenda_y_start + 90
+    # --- UX FIX 3: CONTEXTUAL EMPTY STATE ---
+    agenda_y_start = grid_y_start + 260
     events_today = [e for e in events if e['start'].get('dateTime', e['start'].get('date'))[8:10] == local_now.strftime("%d")]
     
+    display_events = events_today
+    header_text = "Today"
+    
+    # If today is over/empty, smartly switch to Tomorrow or Upcoming
     if not events_today:
-        draw.text((margin_x, list_y), "No events today", fill=(150, 150, 150, 255), font=font_time)
+        tomorrow = local_now + timedelta(days=1)
+        display_events = [e for e in events if e['start'].get('dateTime', e['start'].get('date'))[8:10] == tomorrow.strftime("%d")]
+        header_text = "Tomorrow" if display_events else "Upcoming"
+        if not display_events:
+            display_events = events[:5] 
+
+    draw.text((margin_x, agenda_y_start), header_text, fill=(255, 255, 255, 255), font=font_header)
+    
+    list_y = agenda_y_start + 90
+    
+    if not display_events:
+        draw.text((margin_x, list_y), "Enjoy your free time!", fill=(150, 150, 150, 255), font=font_time)
         
-    for event in events_today[:6]:
+    for event in display_events[:5]:
         start_time_raw = event['start'].get('dateTime', event['start'].get('date'))
-        end_time_raw = event['end'].get('dateTime', event['end'].get('date'))
         
         if 'T' in start_time_raw:
-            time_str = f"{start_time_raw[11:16]}-{end_time_raw[11:16]}"
+            time_str = f"{start_time_raw[11:16]}"
         else:
             time_str = "All day"
             
         summary = event['summary']
-        if len(summary) > 20:
-            summary = summary[:17] + "..."
+        if len(summary) > 22:
+            summary = summary[:19] + "..."
             
         color = event_color_map[event['id']]
         
-        # Cột thời gian (Màu trắng mờ)
-        draw.text((margin_x, list_y), time_str, fill=(200, 200, 200, 255), font=font_time)
-        # Cột Tên sự kiện (Màu sắc tương ứng với block ở trên)
-        draw.text((margin_x + 350, list_y), summary, fill=color, font=font_event)
+        draw.text((margin_x, list_y), time_str, fill=(180, 180, 180, 255), font=font_time)
+        draw.text((margin_x + 250, list_y), summary, fill=color, font=font_event)
         
         list_y += 75
 
     base_image.convert("RGB").save("wallpaper.png")
-    print("Professional Modular UI generated!")
+    print("Pro UX UI generated successfully!")
 
 if __name__ == "__main__":
     events = get_calendar_events()
