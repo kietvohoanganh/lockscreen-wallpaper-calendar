@@ -16,7 +16,7 @@ jobs:
       with:
         python-version: '3.10'
 
-    - run: pip install -r requirements.txt
+    - run: pip install pillow google-api-python-client google-auth
 
     - name: Run Script
       env:
