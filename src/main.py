@@ -1,59 +1,74 @@
 import os
 import json
+import urllib.request
 from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# 1. Authenticate with Google Calendar
 def get_calendar_events():
-    # In GitHub Actions, we will load this from an environment variable
     creds_json = os.environ.get('GOOGLE_CREDENTIALS')
     if creds_json:
         creds_dict = json.loads(creds_json)
         creds = service_account.Credentials.from_service_account_info(creds_dict)
     else:
-        # Fallback for local testing on your Mac
         creds = service_account.Credentials.from_service_account_file('credentials.json')
     
     service = build('calendar', 'v3', credentials=creds)
-    
     now = datetime.utcnow().isoformat() + 'Z'
-    # Get events for the next 7 days
     end_of_week = (datetime.utcnow() + timedelta(days=7)).isoformat() + 'Z'
     
-    # Replace 'primary' with your specific Calendar ID if needed
     events_result = service.events().list(calendarId='primary', timeMin=now,
                                           timeMax=end_of_week, singleEvents=True,
                                           orderBy='startTime').execute()
     return events_result.get('items', [])
 
-# 2. Draw the Image
 def generate_wallpaper(events):
+    # 1. Mở ảnh gốc
     base_image = Image.open("src/background.png").convert("RGBA")
-    draw = ImageDraw.Draw(base_image)
     
-    # For a polished look, you can download a custom .ttf font and load it here
-    font_large = ImageFont.load_default() 
-    font_small = ImageFont.load_default()
+    # 2. Tạo một lớp trong suốt (Overlay) để vẽ khung mờ giúp không làm hỏng ảnh gốc
+    overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
     
-    # Draw a dark overlay for readability
-    draw.rounded_rectangle([100, 600, 1190, 1600], radius=40, fill=(30, 30, 30, 180))
+    # 3. Tải Font chữ Roboto hiện đại trực tiếp từ Google Fonts
+    font_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Medium.ttf"
+    urllib.request.urlretrieve(font_url, "Roboto.ttf")
+    font_title = ImageFont.truetype("Roboto.ttf", 65)
+    font_event = ImageFont.truetype("Roboto.ttf", 45)
     
-    # Draw Agenda
-    y_position = 650
-    draw.text((150, y_position), "This Week's Agenda:", fill=(255, 255, 255), font=font_large)
-    y_position += 80
+    # 4. Vẽ khung lịch trình ở vị trí thấp hơn (Y từ 1400 đến 2200)
+    # Tọa độ: [X_trái, Y_trên, X_phải, Y_dưới]
+    draw.rounded_rectangle([80, 1400, 1210, 2200], radius=50, fill=(20, 20, 20, 160))
     
-    for event in events[:10]: # Limit to 10 events so it fits
+    # 5. Viết tiêu đề
+    y_pos = 1460
+    draw.text((140, y_pos), "Lịch trình 7 ngày tới:", fill=(255, 255, 255, 255), font=font_title)
+    y_pos += 110
+    
+    # 6. Viết các sự kiện
+    if not events:
+        draw.text((140, y_pos), "Không có sự kiện nào!", fill=(200, 200, 200, 255), font=font_event)
+        
+    for event in events[:8]: # Hiển thị tối đa 8 sự kiện
         start = event['start'].get('dateTime', event['start'].get('date'))
-        # Basic parsing (you can refine the date formatting later)
-        time_str = start[:10] 
+        
+        # Xử lý chuỗi thời gian cho gọn (ví dụ: 06/07 09:00)
+        if 'T' in start:
+            time_str = f"{start[8:10]}/{start[5:7]} - {start[11:16]}"
+        else:
+            time_str = f"{start[8:10]}/{start[5:7]} - Cả ngày"
+            
         summary = event['summary']
-        draw.text((150, y_position), f"- {time_str}: {summary}", fill=(200, 200, 200), font=font_small)
-        y_position += 60
+        if len(summary) > 23: # Rút gọn nếu tên sự kiện quá dài
+            summary = summary[:20] + "..."
+            
+        draw.text((140, y_pos), f"• {time_str} : {summary}", fill=(230, 230, 230, 255), font=font_event)
+        y_pos += 75
 
-    base_image.convert("RGB").save("wallpaper.png")
+    # 7. Hợp nhất lớp trong suốt vào ảnh gốc và lưu lại
+    final_image = Image.alpha_composite(base_image, overlay)
+    final_image.convert("RGB").save("wallpaper.png")
     print("Wallpaper generated!")
 
 if __name__ == "__main__":
